@@ -45,12 +45,14 @@
             <button @click="currentPage = --currentPage"
                     class="buttonInBlock paginationButtonBack"
                     v-if="currentPage>1"
-            >назад</button>
+            >назад
+            </button>
             <div class="paginationCurrentPage">page: {{currentPage}}</div>
             <button @click="currentPage = ++currentPage"
                     class="buttonInBlock paginationButtonForward"
                     v-if="hasNextPage"
-            >вперед</button>
+            >вперед
+            </button>
         </div>
 
         <hr class="delimiter">
@@ -65,7 +67,7 @@
                     :key="t.name"
             >
                 <div class="title">{{t.name}} - USD</div>
-                <div class="price">{{t.price}}</div>
+                <div class="price">{{formatPrice(t.price)}}</div>
                 <button class="buttonInBlock" v-on:click.stop="handleDelete(t)">Delete</button>
             </div>
         </div>
@@ -98,6 +100,9 @@
     //7. График плохо выглядит если много цен | Критичность: 2
     //8. localStorage и анонимные вкладки | Критичность: 3
     //9. Магические строки и числа | Критичность: 1
+
+    import {subscribeToTicker, unsubscribeFromTicker} from "./api";
+
     export default {
         name: "App",
         data() {
@@ -122,37 +127,37 @@
             const data = await f.json()
             this.allTickers = data.Data
             this.completeStartRequest = true
-            const tickersData = JSON.parse(localStorage.getItem('cryptonomicon-tickers'))
+            const tickersData = localStorage.getItem('cryptonomicon-tickers')
+            if(tickersData){
+                this.tickers = JSON.parse(tickersData)
+                this.tickers.forEach(ticker => {
+                    subscribeToTicker(ticker.name, (newPrice) => this.updateTicker(ticker.name, newPrice))
+                })
+            }
             //добавляем в data данные из строки запроса url
             const params = new URL(window.location).searchParams
-            if(params.get('filter')){
+            if (params.get('filter')) {
                 this.currentFilter = params.get('filter')
             }
-            if(params.get('page')){
+            if (params.get('page')) {
                 this.currentPage = Number(params.get('page'))
             }
             //----------------------------------------------
-            if(tickersData){
-                this.tickers = tickersData
-                this.tickers.forEach(el => {
-                    this.priceRequest(el.name)
-                })
-            }
         },
         computed: {
-            startIndex(){
+            startIndex() {
                 return this.currentPage * this.pageSize - this.pageSize
             },
-            endIndex(){
+            endIndex() {
                 return this.currentPage * this.pageSize
             },
-            filteredTickers(){
+            filteredTickers() {
                 return this.tickers.filter(el => el.name.includes(this.currentFilter.toUpperCase()))
             },
-            paginatedTickers(){
-            return this.filteredTickers.slice(this.startIndex, this.endIndex)
+            paginatedTickers() {
+                return this.filteredTickers.slice(this.startIndex, this.endIndex)
             },
-            hasNextPage(){
+            hasNextPage() {
                 return this.filteredTickers.length > this.endIndex
             },
             normalizedGraph() {
@@ -171,35 +176,40 @@
             }
         },
         methods: {
-            priceRequest(query) {
-                setInterval(async () => {
-                    const f = await fetch(`https://min-api.cryptocompare.com/data/price?fsym=${query}&tsyms=USD&api_key=f991decaba03005d86f948cb8373ffa679fb18fbb0a3053a212e16f1044b7a3b`)
-                    const data = await f.json()
-                    this.tickers.find(t => t.name === query.toUpperCase()).price = data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2)
-                    //.toPrecision(2) возвращает число убирая в нем все после двух значащих символов после запятой
-                    //.toFixed(2) возвращает число с двумя знаками после запятой
-                    if (this.selectedTicker?.name === query.toUpperCase()) {
-                        this.graph.push(data.USD)
+            updateTicker(tickerName,price){
+                this.tickers.filter(t => t.name === tickerName)
+                .forEach(t => {
+                    t.price = price
+                    if(t === this.selectedTicker){
+                        this.graph.push(price)
                     }
-                }, 3000)
+                })
+            },
+            formatPrice(price) {
+                if (Number.isFinite(price)) {
+                    return price > 1 ? price.toFixed(2) : price.toPrecision(2)
+                } else {
+                    return price
+                }
             },
             add() {
-                const newTicket = {name: this.ticker.toUpperCase(), price: '-'}
-                if (!this.tickers.find(el => el.name === newTicket.name)) {
-                    this.tickers = [...this.tickers, newTicket]
+                const newTicker = {name: this.ticker.toUpperCase(), price: '-'}
+                if (!this.tickers.find(el => el.name === newTicker.name)) {
+                    this.tickers = [...this.tickers, newTicker]
                     this.ticker = ''
                     this.inputError = false
                     this.prompts = []
-                    this.priceRequest(newTicket.name)
+                    subscribeToTicker(newTicker.name, (newPrice) => this.updateTicker(newTicker.name, newPrice))
                 } else {
                     this.inputError = true
                 }
             },
             handleDelete(currentElement) {
                 this.tickers = this.tickers.filter(t => t !== currentElement)
-                if(this.selectedTicker === currentElement){
+                if (this.selectedTicker === currentElement) {
                     this.selectedTicker = 0
                 }
+                unsubscribeFromTicker(currentElement.name)
             },
             select(ticker) {
                 this.selectedTicker = ticker;
@@ -211,23 +221,28 @@
 
         },
         watch: {
-            selectedTicker(previewSelected, newSelected){
-              if (previewSelected !== newSelected){
-                  this.graph = []
-              }
+/*            priceOfSelectedTicker(prevPrice, newPrice) {
+                if(prevPrice !== newPrice) {
+                    this.graph.push(newPrice)
+                }
+            },*/
+            selectedTicker(previewSelected, newSelected) {
+                if (previewSelected !== newSelected) {
+                    this.graph = []
+                }
             },
-            tickers(){
+            tickers() {
                 localStorage.setItem('cryptonomicon-tickers', JSON.stringify(this.tickers))
             },
             paginatedTickers() {
-                if (this.paginatedTickers.length === 0 && this.currentPage > 1){
+                if (this.paginatedTickers.length === 0 && this.currentPage > 1) {
                     this.currentPage -= 1
                 }
             },
             currentFilter: function () {
                 this.currentPage = 1
             },
-            ticker(){
+            ticker() {
                 this.inputError = false
                 this.prompts = []
                 for (const el in this.allTickers) {
@@ -245,11 +260,11 @@
 </script>
 
 <style>
-    .filterBlock{
+    .filterBlock {
         margin: 0 auto;
     }
 
-    .paginationBlock{
+    .paginationBlock {
         width: 150px;
         margin: 10px auto;
         display: grid;
@@ -258,15 +273,15 @@
         justify-content: center;
     }
 
-    .paginationButtonForward{
+    .paginationButtonForward {
         grid-column: 3/4;
     }
 
-    .paginationButtonBack{
+    .paginationButtonBack {
         grid-column: 1/2;
     }
 
-    .paginationCurrentPage{
+    .paginationCurrentPage {
         grid-column: 2/3;
         margin: 0 5px;
         justify-self: center;
