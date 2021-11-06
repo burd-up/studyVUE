@@ -61,7 +61,8 @@
                     @click="select(t)"
                     class="block"
                     :class="{
-                        'blockActive': selectedTicker === t
+                        'block invalidTicker': t.price === 'invalidSub',
+                        'blockActive': selectedTicker === t,
                     }"
                     v-for="t in paginatedTickers"
                     :key="t.name"
@@ -75,16 +76,21 @@
         <div
                 class="graph"
                 v-if="selectedTicker"
+                ref="graph"
         >
             <div
                     v-for="(el, index) in normalizedGraph"
                     :key="index"
-                    :style="{ height: `${el}%`}"
+                    :style="{
+                        height: `${el}%`,
+                        margin: `${graphElementMargin}px`,
+                        width: `${graphElementWidth}px`}"
                     class="graphEll"
+                    ref="graphElement"
             ></div>
             <button
                     class="closeGraph"
-                    @click="selectedTicker = null">x
+                    @click="selectedTicker = null">X
             </button>
         </div>
     </div>
@@ -101,7 +107,7 @@
     //8. localStorage и анонимные вкладки | Критичность: 3
     //9. Магические строки и числа | Критичность: 1
 
-    import {subscribeToTicker, unsubscribeFromTicker} from "./api";
+    import {subscribeToTicker, unsubscribeFromTicker, requestForAllTickers} from "./api";
 
     export default {
         name: "App",
@@ -119,16 +125,17 @@
                 completeStartRequest: false,
                 currentPage: 1,
                 currentFilter: '',
-                pageSize: 6
+                pageSize: 6,
+                maxGraphElement: 1,
+                graphElementWidth: 25,
+                graphElementMargin: 2,
             }
         },
         async created() {
-            const f = await fetch(`https://min-api.cryptocompare.com/data/all/coinlist?summary=true&api_key=f991decaba03005d86f948cb8373ffa679fb18fbb0a3053a212e16f1044b7a3b`)
-            const data = await f.json()
-            this.allTickers = data.Data
+            this.allTickers = await requestForAllTickers()
             this.completeStartRequest = true
             const tickersData = localStorage.getItem('cryptonomicon-tickers')
-            if(tickersData){
+            if (tickersData) {
                 this.tickers = JSON.parse(tickersData)
                 this.tickers.forEach(ticker => {
                     subscribeToTicker(ticker.name, (newPrice) => this.updateTicker(ticker.name, newPrice))
@@ -143,6 +150,15 @@
                 this.currentPage = Number(params.get('page'))
             }
             //----------------------------------------------
+        },
+        mounted() {
+            window.addEventListener('resize', () => {
+                this.calculateMaxGraphElements()
+                this.cropGraphElements()
+            })
+        },
+        beforeUnmount() {
+            window.removeEventListener('resize', this.calculateMaxGraphElements)
         },
         computed: {
             startIndex() {
@@ -176,20 +192,35 @@
             }
         },
         methods: {
-            updateTicker(tickerName,price){
+            calculateMaxGraphElements() {
+                if (!this.$refs.graph) {
+                    return
+                }
+                this.maxGraphElement = Math.floor(this.$refs.graph.clientWidth / (this.graphElementWidth+this.graphElementMargin))
+            },
+            updateTicker(tickerName, price) {
                 this.tickers.filter(t => t.name === tickerName)
-                .forEach(t => {
-                    t.price = price
-                    if(t === this.selectedTicker){
-                        this.graph.push(price)
-                    }
-                })
+                    .forEach(t => {
+                        t.price = price
+                        if (t === this.selectedTicker) {
+                            this.graph.push(price)
+                            this.cropGraphElements(price)
+                        }
+                    })
+                if (this.maxGraphElement === 1) {
+                    this.calculateMaxGraphElements()
+                }
+            },
+            cropGraphElements() {
+                if (this.graph.length > this.maxGraphElement) {
+                    this.graph = this.graph.slice((this.graph.length - this.maxGraphElement), this.graph.length)
+                }
             },
             formatPrice(price) {
                 if (Number.isFinite(price)) {
                     return price > 1 ? price.toFixed(2) : price.toPrecision(2)
                 } else {
-                    return price
+                    return '-'
                 }
             },
             add() {
@@ -221,11 +252,6 @@
 
         },
         watch: {
-/*            priceOfSelectedTicker(prevPrice, newPrice) {
-                if(prevPrice !== newPrice) {
-                    this.graph.push(newPrice)
-                }
-            },*/
             selectedTicker(previewSelected, newSelected) {
                 if (previewSelected !== newSelected) {
                     this.graph = []
@@ -260,6 +286,7 @@
 </script>
 
 <style>
+
     .filterBlock {
         margin: 0 auto;
     }
@@ -307,7 +334,7 @@
         height: 40px;
         border: none;
         width: 80px;
-        border-radius: 5px;
+        border-radius: 20px;
         background-color: #42b983;
         margin: 10px 0;
         font-size: 20px;
@@ -358,6 +385,7 @@
         display: flex;
         flex-wrap: wrap;
         width: 100%;
+
     }
 
     .block {
@@ -370,12 +398,16 @@
         height: 160px;
         border-radius: 10px;
         margin: 10px;
-        background-color: aliceblue;
+        background-color: #f0f8ff;
         text-align: center;
     }
 
     .blockActive {
         border: #42b983 solid 3px;
+    }
+
+    .invalidTicker {
+        background-color: #ffaeae;
     }
 
     .title {
@@ -389,7 +421,7 @@
     .buttonInBlock {
         border: none;
         background-color: #42b983;
-        border-radius: 5px;
+        border-radius: 12.5px;
         width: 90%;
         height: 25px;
         cursor: pointer;
@@ -407,8 +439,6 @@
     }
 
     .graphEll {
-        width: 15px;
-        margin: 2px;
         background-color: #42b983;
     }
 
@@ -416,5 +446,59 @@
         position: absolute;
         top: 10px;
         right: 0;
+        border: gray 2px solid;
+        border-radius: 50%;
+        height: 30px;
+        width: 30px;
+    }
+
+    @media (max-width: 1280px)and (min-width: 1024px) {
+        .content {
+            width: 1000px;
+        }
+
+        .block {
+            flex: 0 1 31%;
+        }
+    }
+
+    @media (max-width: 1023px)and (min-width: 768px) {
+        .content {
+            width: 750px;
+        }
+
+        .block {
+            flex: 1 1 45%;
+        }
+    }
+
+    @media (max-width: 767px)and (min-width: 600px) {
+        .content {
+            width: 600px;
+        }
+
+        .block {
+            flex: 1 1 45%;
+        }
+    }
+
+    @media (max-width: 599px)and (min-width: 480px) {
+        .content {
+            width: 480px;
+        }
+
+        .block {
+            flex: 1 1 90%;
+        }
+    }
+
+    @media (max-width: 479px) {
+        .content {
+            width: 320px;
+        }
+
+        .block {
+            flex: 1 1 90%;
+        }
     }
 </style>
